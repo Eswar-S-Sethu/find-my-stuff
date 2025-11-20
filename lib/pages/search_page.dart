@@ -15,7 +15,7 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage>
     with SingleTickerProviderStateMixin {
-  static const List<String> _placeholders = ['Watch', 'Passport', 'Toy box'];
+  static const List<String> _placeholders = ['Add', 'Search', 'Find'];
   int _placeholderIndex = 0;
   Timer? _timer;
 
