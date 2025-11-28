@@ -307,16 +307,16 @@ class _ForegroundContent extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: RepaintBoundary(
-                    child: _StatCard(
-                      title: 'Secure storage',
-                      mainText: usedStorage,
-                      subtitle: 'of $totalStorage secure storage',
-                    ),
-                  ),
-                ),
+                const SizedBox(width: 160),
+                // Expanded(
+                //   child: RepaintBoundary(
+                //     child: _StatCard(
+                //       title: 'Secure storage',
+                //       mainText: usedStorage,
+                //       subtitle: 'of $totalStorage secure storage',
+                //     ),
+                //   ),
+                // ),
               ],
             ),
 

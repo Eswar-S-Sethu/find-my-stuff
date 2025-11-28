@@ -62,6 +62,31 @@ class _SearchPageState extends State<SearchPage>
     super.dispose();
   }
 
+  // -------- CUSTOM NOTIFICATION --------
+
+  void _showNotification(String message, {bool isSuccess = true, bool isError = false}) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    overlayEntry = OverlayEntry(
+      builder: (context) => _CustomNotification(
+        message: message,
+        isSuccess: isSuccess,
+        isError: isError,
+        onDismiss: () => overlayEntry.remove(),
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+
+    // Auto dismiss after 3 seconds
+    Future.delayed(const Duration(seconds: 3), () {
+      if (overlayEntry.mounted) {
+        overlayEntry.remove();
+      }
+    });
+  }
+
   // -------- SEARCH (READ) --------
 
   Future<void> _performSearch(String query) async {
@@ -94,12 +119,7 @@ class _SearchPageState extends State<SearchPage>
         _notFoundQuery = _results.isEmpty ? trimmed : null;
       });
     } catch (e) {
-      // If something goes wrong with DB, at least show a message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('DB error while searching: $e')),
-        );
-      }
+      _showNotification('Error while searching: $e', isSuccess: false, isError: true);
       setState(() {
         _searchPerformed = true;
         _results = [];
@@ -216,10 +236,10 @@ class _SearchPageState extends State<SearchPage>
                             final where = _addWhereController.text.trim();
 
                             if (what.isEmpty || where.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("Please fill both fields."),
-                                ),
+                              _showNotification(
+                                'Please fill both fields',
+                                isSuccess: false,
+                                isError: true,
                               );
                               return;
                             }
@@ -230,12 +250,10 @@ class _SearchPageState extends State<SearchPage>
                               );
                             } catch (e) {
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'DB error while inserting: $e',
-                                    ),
-                                  ),
+                                _showNotification(
+                                  'Error while inserting: $e',
+                                  isSuccess: false,
+                                  isError: true,
                                 );
                               }
                               return;
@@ -244,13 +262,7 @@ class _SearchPageState extends State<SearchPage>
                             if (!mounted) return;
                             Navigator.pop(dialogContext);
 
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  '"$what" stored at "$where".',
-                                ),
-                              ),
-                            );
+                            _showNotification('"$what" added successfully!');
 
                             // Refresh search if there's a query now
                             if (_searchController.text.trim().isNotEmpty) {
@@ -382,12 +394,10 @@ class _SearchPageState extends State<SearchPage>
                   await AppDatabase.instance.deleteItem(result.id);
                 } catch (e) {
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'DB error while deleting: $e',
-                        ),
-                      ),
+                    _showNotification(
+                      'Error while deleting: $e',
+                      isSuccess: false,
+                      isError: true,
                     );
                   }
                   return;
@@ -401,13 +411,7 @@ class _SearchPageState extends State<SearchPage>
                     _notFoundQuery = _searchQuery.isEmpty ? null : _searchQuery;
                   }
                 });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      '"${result.name}" deleted.',
-                    ),
-                  ),
-                );
+                _showNotification('"${result.name}" deleted successfully!');
               },
               onCancelNotFound: () {
                 setState(() {
@@ -418,6 +422,186 @@ class _SearchPageState extends State<SearchPage>
               onAddToDatabase: _handleAddToDatabase,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// -------- CUSTOM NOTIFICATION WIDGET --------
+
+class _CustomNotification extends StatefulWidget {
+  final String message;
+  final bool isSuccess;
+  final bool isError;
+  final VoidCallback onDismiss;
+
+  const _CustomNotification({
+    required this.message,
+    required this.isSuccess,
+    required this.isError,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_CustomNotification> createState() => _CustomNotificationState();
+}
+
+class _CustomNotificationState extends State<_CustomNotification>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<Offset> _slideAnimation;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(1.2, 0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+
+    _animationController.forward();
+
+    // Auto dismiss animation
+    Future.delayed(const Duration(milliseconds: 2600), () {
+      if (mounted) {
+        _animationController.reverse().then((_) {
+          widget.onDismiss();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Color backgroundColor;
+    Color iconColor;
+    IconData icon;
+
+    if (widget.isError) {
+      backgroundColor = Colors.red.shade50;
+      iconColor = Colors.red.shade700;
+      icon = Icons.error_outline_rounded;
+    } else if (widget.isSuccess) {
+      backgroundColor = Colors.green.shade50;
+      iconColor = Colors.green.shade700;
+      icon = Icons.check_circle_outline_rounded;
+    } else {
+      backgroundColor = Colors.blue.shade50;
+      iconColor = Colors.blue.shade700;
+      icon = Icons.info_outline_rounded;
+    }
+
+    return Positioned(
+      top: 60,
+      right: 16,
+      child: SlideTransition(
+        position: _slideAnimation,
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: Material(
+            color: Colors.transparent,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width * 0.85,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: backgroundColor.withOpacity(0.95),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.5),
+                      width: 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: iconColor.withOpacity(0.2),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: iconColor.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          icon,
+                          color: iconColor,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          widget.message,
+                          style: TextStyle(
+                            color: Colors.grey[900],
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () {
+                          _animationController.reverse().then((_) {
+                            widget.onDismiss();
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(
+                            Icons.close,
+                            size: 16,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
