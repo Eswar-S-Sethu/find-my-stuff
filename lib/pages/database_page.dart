@@ -141,9 +141,6 @@ class _DatabasePageState extends State<DatabasePage>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final controller = _controller;
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -154,138 +151,208 @@ class _DatabasePageState extends State<DatabasePage>
       ),
       body: Stack(
         children: [
-          if (controller != null)
+          // Animated blobs layer with RepaintBoundary
+          if (_controller != null)
             Positioned.fill(
-              child: AnimatedBuilder(
-                animation: controller,
-                builder: (context, child) {
-                  final t = controller.value;
-
-                  Offset blobOffset(double sx, double sy, double phase) {
-                    return Offset(
-                      math.sin(2 * math.pi * (t + phase)) * sx,
-                      math.cos(2 * math.pi * (t + phase)) * sy,
-                    );
-                  }
-
-                  final baseSize = size.width * 0.9;
-
-                  return Stack(
-                    children: [
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(40, 60, 0.0),
-                          child: _Blob(
-                            size: baseSize,
-                            color: const Color(0xFFBA68C8).withOpacity(0.6),
-                            t: t,
-                            phase: 0.0,
-                          ),
-                        ),
-                      ),
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(60, 40, 0.33),
-                          child: _Blob(
-                            size: baseSize,
-                            color: const Color(0xFF64B5F6).withOpacity(0.6),
-                            t: t,
-                            phase: 0.33,
-                          ),
-                        ),
-                      ),
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(50, 50, 0.66),
-                          child: _Blob(
-                            size: baseSize,
-                            color: const Color(0xFFEF9A9A).withOpacity(0.6),
-                            t: t,
-                            phase: 0.66,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
+              child: RepaintBoundary(
+                child: _AnimatedBlobsLayer(controller: _controller!),
               ),
             ),
 
-          // Glass blur overlay
+          // Static blur layer with RepaintBoundary
           Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                color: Colors.white.withOpacity(0.25),
-              ),
+            child: RepaintBoundary(
+              child: const _BlurOverlay(),
             ),
           ),
 
-          // Foreground content
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Top two cards side by side
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _StatCard(
-                          title: 'Total records',
-                          mainText: '$_totalRecords',
-                          subtitle: 'items saved',
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatCard(
-                          title: 'Secure storage',
-                          mainText: _usedStorage,
-                          subtitle: 'of $_totalStorage secure storage',
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Long card: Most searched items
-                  if (_topSearchedItems.isNotEmpty)
-                    _MostSearchedCard(
-                      currentItem: _topSearchedItems[_currentItemIndex],
-                    ),
-
-                  const Spacer(),
-
-                  // Clear all records button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _clearAllRecords,
-                      icon: const Icon(Icons.delete_forever),
-                      label: const Text('Clear all records'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 14,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          // Foreground content (only rebuilds when data changes)
+          _ForegroundContent(
+            totalRecords: _totalRecords,
+            usedStorage: _usedStorage,
+            totalStorage: _totalStorage,
+            currentItem: _topSearchedItems.isNotEmpty
+                ? _topSearchedItems[_currentItemIndex]
+                : null,
+            onClearRecords: _clearAllRecords,
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Separate widget for animated blobs - isolated repaints
+class _AnimatedBlobsLayer extends StatelessWidget {
+  final AnimationController controller;
+
+  const _AnimatedBlobsLayer({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        final size = MediaQuery.of(context).size;
+        final t = controller.value;
+
+        Offset blobOffset(double sx, double sy, double phase) {
+          return Offset(
+            math.sin(2 * math.pi * (t + phase)) * sx,
+            math.cos(2 * math.pi * (t + phase)) * sy,
+          );
+        }
+
+        final baseSize = size.width * 0.9;
+
+        return Stack(
+          children: [
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(40, 60, 0.0),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFFBA68C8).withOpacity(0.6),
+                    t: t,
+                    phase: 0.0,
+                  ),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(60, 40, 0.33),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFF64B5F6).withOpacity(0.6),
+                    t: t,
+                    phase: 0.33,
+                  ),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(50, 50, 0.66),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFFEF9A9A).withOpacity(0.6),
+                    t: t,
+                    phase: 0.66,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// Static blur overlay - never rebuilds
+class _BlurOverlay extends StatelessWidget {
+  const _BlurOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+      child: Container(
+        color: Colors.white.withOpacity(0.25),
+      ),
+    );
+  }
+}
+
+// Foreground content - only rebuilds when data changes
+class _ForegroundContent extends StatelessWidget {
+  final int totalRecords;
+  final String usedStorage;
+  final String totalStorage;
+  final String? currentItem;
+  final VoidCallback onClearRecords;
+
+  const _ForegroundContent({
+    required this.totalRecords,
+    required this.usedStorage,
+    required this.totalStorage,
+    required this.currentItem,
+    required this.onClearRecords,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top two cards side by side
+            Row(
+              children: [
+                Expanded(
+                  child: RepaintBoundary(
+                    child: _StatCard(
+                      title: 'Total records',
+                      mainText: '$totalRecords',
+                      subtitle: 'items saved',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: RepaintBoundary(
+                    child: _StatCard(
+                      title: 'Secure storage',
+                      mainText: usedStorage,
+                      subtitle: 'of $totalStorage secure storage',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+
+            // Long card: Most searched items
+            if (currentItem != null)
+              RepaintBoundary(
+                child: _MostSearchedCard(
+                  currentItem: currentItem!,
+                ),
+              ),
+
+            const Spacer(),
+
+            // Clear all records button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: onClearRecords,
+                icon: const Icon(Icons.delete_forever),
+                label: const Text('Clear all records'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

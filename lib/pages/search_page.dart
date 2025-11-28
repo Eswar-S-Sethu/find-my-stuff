@@ -326,12 +326,23 @@ class _SearchPageState extends State<SearchPage>
     );
   }
 
+  // Get accent color based on item name (for variety)
+  Color _getAccentColor(String name) {
+    final colors = [
+      const Color(0xFFBA68C8), // Purple
+      const Color(0xFF64B5F6), // Blue
+      const Color(0xFFEF9A9A), // Pink
+      const Color(0xFF81C784), // Green
+      const Color(0xFFFFD54F), // Yellow
+    ];
+    final hash = name.hashCode.abs();
+    return colors[hash % colors.length];
+  }
+
   // -------- BUILD --------
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
     return Scaffold(
       backgroundColor: Colors.white,
       body: GestureDetector(
@@ -339,327 +350,617 @@ class _SearchPageState extends State<SearchPage>
         onTap: _resetToStartupState,
         child: Stack(
           children: [
-            // animated color blobs background
+            // Animated blobs layer with RepaintBoundary
             Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  final t = _controller.value;
+              child: RepaintBoundary(
+                child: _AnimatedBlobsLayer(controller: _controller),
+              ),
+            ),
 
-                  Offset blobOffset(double sx, double sy, double phase) {
-                    return Offset(
-                      math.sin(2 * math.pi * (t + phase)) * sx,
-                      math.cos(2 * math.pi * (t + phase)) * sy,
+            // Static blur layer with RepaintBoundary
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: const _BlurOverlay(),
+              ),
+            ),
+
+            // Foreground content (only rebuilds when data changes)
+            _ForegroundContent(
+              placeholderIndex: _placeholderIndex,
+              searchController: _searchController,
+              searchPerformed: _searchPerformed,
+              results: _results,
+              notFoundQuery: _notFoundQuery,
+              searchQuery: _searchQuery,
+              onSearchChanged: _performSearch,
+              onSearchSubmitted: _performSearch,
+              onAddPressed: _openAddDialog,
+              onRecordsPressed: _openRecordsPage,
+              getAccentColor: _getAccentColor,
+              onDeleteItem: (index, result) async {
+                try {
+                  await AppDatabase.instance.deleteItem(result.id);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'DB error while deleting: $e',
+                        ),
+                      ),
                     );
                   }
+                  return;
+                }
 
-                  final baseSize = size.width * 0.9;
-
-                  return Stack(
-                    children: [
-                      // lilac blob
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(40, 60, 0.0),
-                          child: _Blob(
-                            size: baseSize,
-                            color: const Color(0xFFBA68C8).withOpacity(0.6),
-                            t: t,
-                            phase: 0.0,
-                          ),
-                        ),
-                      ),
-                      // light blue blob
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(60, 40, 0.33),
-                          child: _Blob(
-                            size: baseSize,
-                            color:
-                            const Color(0xFF64B5F6).withOpacity(0.6),
-                            t: t,
-                            phase: 0.33,
-                          ),
-                        ),
-                      ),
-                      // light red blob
-                      Align(
-                        alignment: Alignment.center,
-                        child: Transform.translate(
-                          offset: blobOffset(50, 50, 0.66),
-                          child: _Blob(
-                            size: baseSize,
-                            color:
-                            const Color(0xFFEF9A9A).withOpacity(0.6),
-                            t: t,
-                            phase: 0.66,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+                if (!mounted) return;
+                setState(() {
+                  _results.removeAt(index);
+                  if (_results.isEmpty) {
+                    _searchPerformed = true;
+                    _notFoundQuery = _searchQuery.isEmpty ? null : _searchQuery;
+                  }
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      '"${result.name}" deleted.',
+                    ),
+                  ),
+                );
+              },
+              onCancelNotFound: () {
+                setState(() {
+                  _notFoundQuery = null;
+                  _searchPerformed = false;
+                });
+              },
+              onAddToDatabase: _handleAddToDatabase,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-            // FULL-SCREEN GLASS BLUR LAYER
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  color: Colors.white.withOpacity(0.25),
+// Separate widget for animated blobs - isolated repaints
+class _AnimatedBlobsLayer extends StatelessWidget {
+  final AnimationController controller;
+
+  const _AnimatedBlobsLayer({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        final size = MediaQuery.of(context).size;
+        final t = controller.value;
+
+        Offset blobOffset(double sx, double sy, double phase) {
+          return Offset(
+            math.sin(2 * math.pi * (t + phase)) * sx,
+            math.cos(2 * math.pi * (t + phase)) * sy,
+          );
+        }
+
+        final baseSize = size.width * 0.9;
+
+        return Stack(
+          children: [
+            // lilac blob
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(40, 60, 0.0),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFFBA68C8).withOpacity(0.6),
+                    t: t,
+                    phase: 0.0,
+                  ),
                 ),
               ),
             ),
-
-            // centered search bar + action buttons + results
-            Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: size.width * 0.9,
-                  maxHeight: size.height * 0.78,
+            // light blue blob
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(60, 40, 0.33),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFF64B5F6).withOpacity(0.6),
+                    t: t,
+                    phase: 0.33,
+                  ),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+              ),
+            ),
+            // light red blob
+            Align(
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: blobOffset(50, 50, 0.66),
+                child: RepaintBoundary(
+                  child: _Blob(
+                    size: baseSize,
+                    color: const Color(0xFFEF9A9A).withOpacity(0.6),
+                    t: t,
+                    phase: 0.66,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// Static blur overlay - never rebuilds
+class _BlurOverlay extends StatelessWidget {
+  const _BlurOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+      child: Container(
+        color: Colors.white.withOpacity(0.25),
+      ),
+    );
+  }
+}
+
+// Foreground content - only rebuilds when data changes
+class _ForegroundContent extends StatelessWidget {
+  final int placeholderIndex;
+  final TextEditingController searchController;
+  final bool searchPerformed;
+  final List<_SearchResult> results;
+  final String? notFoundQuery;
+  final String searchQuery;
+  final Function(String) onSearchChanged;
+  final Function(String) onSearchSubmitted;
+  final VoidCallback onAddPressed;
+  final VoidCallback onRecordsPressed;
+  final Color Function(String) getAccentColor;
+  final Function(int, _SearchResult) onDeleteItem;
+  final VoidCallback onCancelNotFound;
+  final Function(String) onAddToDatabase;
+
+  const _ForegroundContent({
+    required this.placeholderIndex,
+    required this.searchController,
+    required this.searchPerformed,
+    required this.results,
+    required this.notFoundQuery,
+    required this.searchQuery,
+    required this.onSearchChanged,
+    required this.onSearchSubmitted,
+    required this.onAddPressed,
+    required this.onRecordsPressed,
+    required this.getAccentColor,
+    required this.onDeleteItem,
+    required this.onCancelNotFound,
+    required this.onAddToDatabase,
+  });
+
+  static const List<String> _placeholders = ['Add', 'Search', 'Find'];
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          height: 45,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 20, color: Colors.grey[700]),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.grey[800],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: size.width * 0.9,
+          maxHeight: size.height * 0.78,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Search your things',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF111827),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Search bar
+            RepaintBoundary(
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                child: Row(
                   children: [
-                    const Text(
-                      'Search your things',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF111827),
-                      ),
+                    const Icon(
+                      Icons.search,
+                      size: 20,
+                      color: Colors.grey,
                     ),
-                    const SizedBox(height: 16),
-
-                    // Search bar
-                    Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.search,
-                            size: 20,
-                            color: Colors.grey,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: searchController,
+                        decoration: InputDecoration(
+                          isCollapsed: true,
+                          border: InputBorder.none,
+                          hintText: _placeholders[placeholderIndex],
+                          hintStyle: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 16,
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _searchController,
-                              decoration: InputDecoration(
-                                isCollapsed: true,
-                                border: InputBorder.none,
-                                hintText: _placeholders[_placeholderIndex],
-                                hintStyle: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 16,
-                                ),
-                              ),
-                              style: const TextStyle(
-                                color: Color(0xFF111827),
-                                fontSize: 16,
-                              ),
-                              textInputAction: TextInputAction.search,
-                              onChanged: (value) => _performSearch(value),
-                              onSubmitted: _performSearch,
-                              onTap: () {
-                                // Let user type without resetting on tap
-                              },
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.arrow_forward),
-                            color: Colors.grey,
-                            onPressed: () =>
-                                _performSearch(_searchController.text),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // Action buttons row: Add / Records
-                    Row(
-                      children: [
-                        _buildActionButton(
-                          icon: Icons.add,
-                          label: 'Add',
-                          onTap: _openAddDialog,
                         ),
-                        const SizedBox(width: 12),
-                        _buildActionButton(
-                          icon: Icons.storage,
-                          label: 'Records',
-                          onTap: _openRecordsPage,
+                        style: const TextStyle(
+                          color: Color(0xFF111827),
+                          fontSize: 16,
                         ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // Results / Not-found area
-                    if (_searchPerformed)
-                      Expanded(
-                        child: _results.isNotEmpty
-                            ? ListView.builder(
-                          itemCount: _results.length,
-                          shrinkWrap: true,
-                          itemBuilder: (context, index) {
-                            final result = _results[index];
-                            return Card(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              elevation: 4,
-                              margin: const EdgeInsets.symmetric(
-                                vertical: 8,
-                              ),
-                              child: ListTile(
-                                leading: const Icon(
-                                  Icons.inventory_2_rounded,
-                                  color: Color(0xFF4F46E5),
-                                ),
-                                title: Text(
-                                  result.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                subtitle: Padding(
-                                  padding:
-                                  const EdgeInsets.only(top: 4.0),
-                                  child: Text(
-                                    result.location,
-                                    style: const TextStyle(
-                                      color: Color(0xFF4B5563),
-                                    ),
-                                  ),
-                                ),
-                                trailing: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete_outline,
-                                    color: Colors.redAccent,
-                                  ),
-                                  onPressed: () async {
-                                    try {
-                                      await AppDatabase.instance
-                                          .deleteItem(result.id);
-                                    } catch (e) {
-                                      if (mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              'DB error while deleting: $e',
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                      return;
-                                    }
-
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _results.removeAt(index);
-                                      if (_results.isEmpty) {
-                                        _searchPerformed = true;
-                                        _notFoundQuery =
-                                        _searchQuery.isEmpty
-                                            ? null
-                                            : _searchQuery;
-                                      }
-                                    });
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          '"${result.name}" deleted.',
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            );
-                          },
-                        )
-                            : _notFoundQuery != null
-                            ? Card(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          elevation: 4,
-                          margin: const EdgeInsets.symmetric(
-                            vertical: 8,
-                          ),
-                          child: Padding(
-                            padding:
-                            const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'No results found for "${_notFoundQuery!}".',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Would you like to add this to the database?',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Color(0xFF4B5563),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  mainAxisAlignment:
-                                  MainAxisAlignment.end,
-                                  children: [
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _notFoundQuery = null;
-                                          _searchPerformed = false;
-                                        });
-                                      },
-                                      child: const Text('Cancel'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton(
-                                      onPressed: () =>
-                                          _handleAddToDatabase(
-                                            _notFoundQuery!,
-                                          ),
-                                      child: const Text('Add'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                            : const SizedBox.shrink(),
+                        textInputAction: TextInputAction.search,
+                        onChanged: (value) => onSearchChanged(value),
+                        onSubmitted: onSearchSubmitted,
+                        onTap: () {
+                          // Let user type without resetting on tap
+                        },
                       ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_forward),
+                      color: Colors.grey,
+                      onPressed: () => onSearchSubmitted(searchController.text),
+                    ),
                   ],
                 ),
               ),
             ),
+
+            const SizedBox(height: 12),
+
+            // Action buttons row: Add / Records
+            RepaintBoundary(
+              child: Row(
+                children: [
+                  _buildActionButton(
+                    icon: Icons.add,
+                    label: 'Add',
+                    onTap: onAddPressed,
+                  ),
+                  const SizedBox(width: 12),
+                  _buildActionButton(
+                    icon: Icons.storage,
+                    label: 'Records',
+                    onTap: onRecordsPressed,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Results / Not-found area
+            if (searchPerformed)
+              Expanded(
+                child: results.isNotEmpty
+                    ? ListView.builder(
+                  itemCount: results.length,
+                  shrinkWrap: true,
+                  itemBuilder: (context, index) {
+                    final result = results[index];
+                    final accentColor = getAccentColor(result.name);
+
+                    return RepaintBoundary(
+                      child: TweenAnimationBuilder<double>(
+                        duration: Duration(milliseconds: 300 + (index * 50)),
+                        curve: Curves.easeOutCubic,
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        builder: (context, value, child) {
+                          return Transform.translate(
+                            offset: Offset(0, 20 * (1 - value)),
+                            child: Opacity(
+                              opacity: value,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 12.0),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.3),
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: accentColor.withOpacity(0.2),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(20),
+                                  onTap: () {
+                                    // Optional: Add tap behavior
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Row(
+                                      children: [
+                                        // Colored accent bar
+                                        Container(
+                                          width: 4,
+                                          height: 50,
+                                          decoration: BoxDecoration(
+                                            color: accentColor,
+                                            borderRadius: BorderRadius.circular(2),
+                                          ),
+                                        ),
+
+                                        const SizedBox(width: 16),
+
+                                        // Icon with circular background
+                                        Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: accentColor.withOpacity(0.2),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            Icons.inventory_2_rounded,
+                                            color: accentColor,
+                                            size: 24,
+                                          ),
+                                        ),
+
+                                        const SizedBox(width: 16),
+
+                                        // Text content
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                result.name,
+                                                style: const TextStyle(
+                                                  fontSize: 17,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF111827),
+                                                  letterSpacing: -0.3,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.location_on_outlined,
+                                                    size: 14,
+                                                    color: Colors.grey[600],
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Expanded(
+                                                    child: Text(
+                                                      result.location,
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        color: Colors.grey[700],
+                                                        fontWeight: FontWeight.w500,
+                                                      ),
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+
+                                        const SizedBox(width: 12),
+
+                                        // Delete button
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(12),
+                                            onTap: () => onDeleteItem(index, result),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: Colors.red.shade50.withOpacity(0.8),
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: Icon(
+                                                Icons.delete_outline_rounded,
+                                                color: Colors.red.shade600,
+                                                size: 22,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                )
+                    : notFoundQuery != null
+                    ? RepaintBoundary(
+                  child: TweenAnimationBuilder<double>(
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeOutCubic,
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    builder: (context, value, child) {
+                      return Transform.translate(
+                        offset: Offset(0, 20 * (1 - value)),
+                        child: Opacity(
+                          opacity: value,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.7),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 1.5,
+                            ),
+                          ),
+                          padding: const EdgeInsets.all(20.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange.shade100.withOpacity(0.8),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.search_off_rounded,
+                                      color: Colors.orange.shade700,
+                                      size: 24,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      'No results found',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.grey[800],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'We couldn\'t find "$notFoundQuery" in your records.',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: Colors.grey[700],
+                                  height: 1.4,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Would you like to add it?',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton(
+                                    onPressed: onCancelNotFound,
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.grey[700],
+                                    ),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    onPressed: () => onAddToDatabase(notFoundQuery!),
+                                    icon: const Icon(Icons.add, size: 18),
+                                    label: const Text('Add to Records'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF4F46E5),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 12,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                    : const SizedBox.shrink(),
+              ),
           ],
         ),
       ),
